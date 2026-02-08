@@ -1,0 +1,23 @@
+# Example: Read-only Sandbox
+# Use this for tasks that only need to analyze or inspect data
+
+name: readonly-analysis
+runtime: python:3.11
+ttl: 15m
+
+inputs:
+  - data/*.json
+  - config.yaml
+
+outputs:
+  - report.md
+  - analysis/
+
+permissions:
+  filesystem: readonly
+  network: false
+
+resources:
+  cpu: 1
+  memory: 512M
+  timeout: 10m

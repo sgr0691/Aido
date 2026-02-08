@@ -1,0 +1,28 @@
+# Example: Sandbox with Write Permissions
+# Use this for tasks that need to modify files or make changes
+# CAUTION: Requires --dangerous-allow-mutations flag
+
+name: file-transformation
+runtime: node:18
+ttl: 20m
+
+inputs:
+  - source/*.ts
+  - package.json
+
+outputs:
+  - build/
+  - transformed/
+  - build.log
+
+permissions:
+  filesystem: readwrite  # Dangerous: allows file modifications
+  network: true          # Allows network access (e.g., for npm install)
+
+env:
+  NODE_ENV: development
+
+resources:
+  cpu: 2
+  memory: 1G
+  timeout: 15m

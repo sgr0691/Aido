@@ -1,0 +1,33 @@
+# Example: Cloud-Aware Sandbox
+# Use this for tasks that need to interact with cloud infrastructure
+# Note: Cloud permissions are a stub in v0.1
+
+name: aws-infrastructure-check
+runtime: python:3.11
+ttl: 30m
+
+inputs:
+  - scripts/check_instances.py
+  - config/aws-regions.json
+
+outputs:
+  - reports/
+  - findings.json
+
+permissions:
+  filesystem: readonly
+  network: true
+  aws:
+    role: readonly
+    services:
+      - ec2
+      - rds
+      - s3
+
+env:
+  AWS_REGION: us-east-1
+
+resources:
+  cpu: 1
+  memory: 512M
+  timeout: 20m
