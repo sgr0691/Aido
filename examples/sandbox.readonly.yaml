@@ -1,0 +1,18 @@
+# Readonly sandbox — safe inspection of logs and infrastructure state
+name: inspect-logs
+runtime: python
+ttl: 10m
+
+inputs:
+  - logs/*.json
+  - config/settings.yaml
+
+outputs:
+  - report.md
+
+permissions:
+  aws:
+    role: readonly
+    services:
+      - cloudwatch
+      - ec2

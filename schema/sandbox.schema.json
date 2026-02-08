@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Aido Sandbox Spec",
+  "description": "Schema for Aido sandbox.yaml configuration files (v0.1)",
+  "type": "object",
+  "required": ["name", "runtime", "ttl"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Human-readable name for the sandbox",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "Runtime environment: 'python', 'node', 'bash', or a Docker image",
+      "examples": ["python", "node", "bash", "python:3.12-slim"]
+    },
+    "ttl": {
+      "type": "string",
+      "description": "Time-to-live duration (e.g., '5m', '1h', '30s')",
+      "pattern": "^[0-9]+(s|m|h)$"
+    },
+    "inputs": {
+      "type": "array",
+      "description": "Glob patterns for input files (mounted read-only)",
+      "items": {
+        "type": "string"
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "description": "Expected output file paths",
+      "items": {
+        "type": "string"
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "description": "Infrastructure access permissions (stub in v0.1)",
+      "properties": {
+        "aws": {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "enum": ["readonly", "readwrite"]
+            },
+            "services": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

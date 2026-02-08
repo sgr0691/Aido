@@ -1,0 +1,44 @@
+{
+  "name": "aido",
+  "version": "0.1.0",
+  "description": "Run AI-generated code safely against real infrastructure",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "aido": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "ai",
+    "sandbox",
+    "docker",
+    "execution",
+    "safety",
+    "cli"
+  ],
+  "author": "Sergio Rovira",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.1.0",
+    "dockerode": "^4.0.4",
+    "js-yaml": "^4.1.0",
+    "nanoid": "^5.0.9"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.34",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.17.0",
+    "eslint": "^9.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

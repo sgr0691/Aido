@@ -1,0 +1,18 @@
+# Mutation sandbox — applies changes (requires explicit opt-in at runtime)
+name: apply-migration
+runtime: node
+ttl: 5m
+
+inputs:
+  - migrations/*.sql
+  - schema/current.sql
+
+outputs:
+  - migration-result.json
+  - diffs/
+
+permissions:
+  aws:
+    role: readwrite
+    services:
+      - rds
