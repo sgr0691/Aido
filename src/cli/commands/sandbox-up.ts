@@ -33,6 +33,18 @@ export async function sandboxUp(options: SandboxUpOptions): Promise<void> {
         name: options.name || 'default',
         runtime: options.runtime || 'python:3.11',
         ttl: options.ttl || '15m',
+        inputs: [],
+        outputs: ['outputs/'],
+        permissions: {
+          filesystem: 'readonly',
+          network: false,
+        },
+        env: {},
+        resources: {
+          cpu: 1,
+          memory: '512M',
+          timeout: '10m',
+        },
       };
     }
 

@@ -91,4 +91,16 @@ describe('sandboxConfigSchema', () => {
 
     expect(() => sandboxConfigSchema.parse(config)).toThrow();
   });
+
+  it('should reject unsafe input and output paths', () => {
+    const config = {
+      name: 'test',
+      runtime: 'python:3.11',
+      ttl: '15m',
+      inputs: ['../secrets.env'],
+      outputs: ['/tmp/out.log'],
+    };
+
+    expect(() => sandboxConfigSchema.parse(config)).toThrow();
+  });
 });

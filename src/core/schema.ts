@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import { isSafeConfigPath } from './path-rules.js';
+
+const sandboxPathSchema = z
+  .string()
+  .min(1, 'Path is required')
+  .refine(isSafeConfigPath, 'Paths must be relative and cannot traverse parent directories');
 
 /**
  * Duration string schema (e.g., "15m", "2h", "30s")
@@ -9,7 +15,6 @@ export const durationSchema = z
   .refine((val) => {
     const match = val.match(/^(\d+)([smh])$/);
     if (!match) return false;
-    const [, num, unit] = match;
     const minutes = parseDuration(val);
     return minutes >= 1 && minutes <= 1440; // 1 minute to 24 hours
   }, 'Duration must be between 1m and 24h');
@@ -21,8 +26,8 @@ export const sandboxConfigSchema = z.object({
   name: z.string().min(1, 'Sandbox name is required'),
   runtime: z.string().min(1, 'Runtime is required'),
   ttl: durationSchema,
-  inputs: z.array(z.string()).optional().default([]),
-  outputs: z.array(z.string()).optional().default(['outputs/']),
+  inputs: z.array(sandboxPathSchema).optional().default([]),
+  outputs: z.array(sandboxPathSchema).optional().default(['outputs/']),
   permissions: z
     .object({
       filesystem: z.enum(['readonly', 'readwrite', 'none']).optional().default('readonly'),
@@ -40,7 +45,11 @@ export const sandboxConfigSchema = z.object({
   resources: z
     .object({
       cpu: z.number().positive().optional().default(1),
-      memory: z.string().regex(/^\d+[MG]$/).optional().default('512M'),
+      memory: z
+        .string()
+        .regex(/^\d+[MG]$/)
+        .optional()
+        .default('512M'),
       timeout: durationSchema.optional().default('10m'),
     })
     .optional()
@@ -97,7 +106,8 @@ export function parseDuration(duration: string): number {
   const match = duration.match(/^(\d+)([smh])$/);
   if (!match) throw new Error(`Invalid duration format: ${duration}`);
 
-  const [, numStr, unit] = match;
+  const numStr = match[1]!;
+  const unit = match[2]!;
   const num = parseInt(numStr, 10);
 
   switch (unit) {
@@ -126,7 +136,8 @@ export function parseMemory(memory: string): number {
   const match = memory.match(/^(\d+)([MG])$/);
   if (!match) throw new Error(`Invalid memory format: ${memory}`);
 
-  const [, numStr, unit] = match;
+  const numStr = match[1]!;
+  const unit = match[2]!;
   const num = parseInt(numStr, 10);
 
   switch (unit) {

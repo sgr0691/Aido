@@ -1,9 +1,18 @@
 import Docker from 'dockerode';
-import { join } from 'path';
+import { copyFile, stat } from 'fs/promises';
+import { dirname, join, resolve } from 'path';
 import { type SandboxConfig, parseDurationMs, parseMemory } from '../core/schema.js';
+import {
+  getGlobSearchBase,
+  globToRegExp,
+  isGlobPath,
+  isPathAllowed,
+  normalizeConfigPath,
+  normalizeOutputRule,
+} from '../core/path-rules.js';
 import { getSandboxDir } from '../core/sandbox.js';
 import { logger } from '../utils/logger.js';
-import { pathExists } from '../utils/fs.js';
+import { ensureDir, getAllFiles, pathExists, removeDir } from '../utils/fs.js';
 
 export interface RuntimeOptions {
   sandboxId: string;
@@ -28,6 +37,10 @@ export class DockerRuntime {
 
   constructor() {
     this.docker = new Docker();
+  }
+
+  private toPosixPath(pathValue: string): string {
+    return pathValue.replace(/\\/g, '/');
   }
 
   /**
@@ -117,6 +130,124 @@ export class DockerRuntime {
     }
   }
 
+  private async stageInputs(inputRules: string[], inputsDir: string): Promise<number> {
+    await removeDir(inputsDir);
+    await ensureDir(inputsDir);
+
+    if (inputRules.length === 0) {
+      return 0;
+    }
+
+    const workspaceRoot = process.cwd();
+    const stagedFiles = new Map<string, string>();
+
+    for (const inputRule of inputRules) {
+      const normalizedRule = normalizeConfigPath(inputRule);
+      if (!normalizedRule) continue;
+
+      const matches = await this.resolveInputMatches(workspaceRoot, normalizedRule);
+      if (matches.length === 0) {
+        logger.warn(`Input pattern matched no files: ${inputRule}`);
+        continue;
+      }
+
+      for (const match of matches) {
+        stagedFiles.set(match.relativePath, match.absolutePath);
+      }
+    }
+
+    for (const [relativePath, absolutePath] of stagedFiles) {
+      const destinationPath = join(inputsDir, relativePath);
+      await ensureDir(dirname(destinationPath));
+      await copyFile(absolutePath, destinationPath);
+    }
+
+    logger.debug('Staged input files', { count: stagedFiles.size });
+    return stagedFiles.size;
+  }
+
+  private async resolveInputMatches(
+    workspaceRoot: string,
+    inputRule: string
+  ): Promise<Array<{ relativePath: string; absolutePath: string }>> {
+    if (isGlobPath(inputRule)) {
+      return this.resolveGlobMatches(workspaceRoot, inputRule);
+    }
+
+    const absolutePath = resolve(workspaceRoot, inputRule);
+    if (!pathExists(absolutePath)) {
+      throw new Error(`Input path not found: ${inputRule}`);
+    }
+
+    const fileStats = await stat(absolutePath);
+    if (fileStats.isDirectory()) {
+      const nestedFiles = await getAllFiles(absolutePath);
+      return nestedFiles.map((nestedFile) => {
+        const relativePath = this.toPosixPath(join(inputRule, nestedFile));
+        return {
+          relativePath,
+          absolutePath: join(absolutePath, nestedFile),
+        };
+      });
+    }
+
+    return [{ relativePath: inputRule, absolutePath }];
+  }
+
+  private async resolveGlobMatches(
+    workspaceRoot: string,
+    inputRule: string
+  ): Promise<Array<{ relativePath: string; absolutePath: string }>> {
+    const searchBase = getGlobSearchBase(inputRule);
+    const absoluteSearchBase = resolve(workspaceRoot, searchBase);
+
+    if (!pathExists(absoluteSearchBase)) {
+      return [];
+    }
+
+    const matcher = globToRegExp(inputRule);
+    const candidateFiles = await getAllFiles(absoluteSearchBase);
+    const matches: Array<{ relativePath: string; absolutePath: string }> = [];
+
+    for (const candidateFile of candidateFiles) {
+      const joined = searchBase === '.' ? candidateFile : join(searchBase, candidateFile);
+      const relativePath = this.toPosixPath(joined);
+      if (!matcher.test(relativePath)) continue;
+
+      matches.push({
+        relativePath,
+        absolutePath: join(absoluteSearchBase, candidateFile),
+      });
+    }
+
+    return matches;
+  }
+
+  private async resetOutputs(outputsDir: string): Promise<void> {
+    await removeDir(outputsDir);
+    await ensureDir(outputsDir);
+  }
+
+  private async findUnauthorizedOutputs(outputsDir: string, outputRules: string[]): Promise<string[]> {
+    if (!pathExists(outputsDir)) {
+      return [];
+    }
+
+    const normalizedRules = outputRules.map((rule) => normalizeOutputRule(rule));
+    const outputFiles = await getAllFiles(outputsDir);
+
+    return outputFiles
+      .map((outputFile) => this.toPosixPath(outputFile))
+      .filter((outputFile) => !isPathAllowed(outputFile, normalizedRules))
+      .sort();
+  }
+
+  private appendStderr(currentStderr: string, message: string): string {
+    if (!currentStderr) return message;
+    if (currentStderr.endsWith('\n')) return `${currentStderr}${message}`;
+    return `${currentStderr}\n${message}`;
+  }
+
   /**
    * Execute task in Docker container
    */
@@ -140,12 +271,19 @@ export class DockerRuntime {
     const workDir = join(sandboxDir, 'work');
     const outputsDir = join(sandboxDir, 'outputs');
 
+    await ensureDir(workDir);
+    await ensureDir(inputsDir);
+    await ensureDir(outputsDir);
+
     // Get Docker image
     const image = this.getImage(config.runtime);
     await this.ensureImage(image);
 
+    // Stage configured inputs and clear previous outputs
+    const stagedInputCount = await this.stageInputs(config.inputs || [], inputsDir);
+    await this.resetOutputs(outputsDir);
+
     // Copy task to work directory
-    const { copyFile } = await import('fs/promises');
     const taskName = taskPath.split('/').pop()!;
     const workTaskPath = join(workDir, taskName);
     await copyFile(taskPath, workTaskPath);
@@ -153,15 +291,18 @@ export class DockerRuntime {
     // Prepare command
     const command = this.getCommand(config.runtime, taskPath);
 
-    // Prepare binds (volume mounts)
-    const binds = [
-      `${workDir}:/work`,
-      `${outputsDir}:/outputs`,
-    ];
+    const filesystemMode = config.permissions?.filesystem || 'readonly';
+    const workReadOnly = filesystemMode !== 'readwrite' || !allowMutations;
 
-    // Add inputs if they exist
-    const inputsExist = pathExists(inputsDir);
-    if (inputsExist) {
+    // Prepare binds (volume mounts)
+    const binds = [`${workDir}:/work${workReadOnly ? ':ro' : ''}`];
+
+    if (filesystemMode !== 'none') {
+      binds.push(`${outputsDir}:/outputs`);
+    }
+
+    // Add staged inputs if they exist
+    if (stagedInputCount > 0) {
       binds.push(`${inputsDir}:/inputs:ro`);
     }
 
@@ -224,10 +365,10 @@ export class DockerRuntime {
       stream,
       {
         write: (chunk: Buffer) => stdoutStream.push(chunk),
-      } as NodeJS.WritableStream,
+      } as unknown as NodeJS.WritableStream,
       {
         write: (chunk: Buffer) => stderrStream.push(chunk),
-      } as NodeJS.WritableStream
+      } as unknown as NodeJS.WritableStream
     );
 
     // Start container
@@ -243,10 +384,7 @@ export class DockerRuntime {
     });
 
     try {
-      await Promise.race([
-        container.wait(),
-        timeoutPromise,
-      ]);
+      await Promise.race([container.wait(), timeoutPromise]);
     } catch (error) {
       // Kill container on timeout
       try {
@@ -265,7 +403,21 @@ export class DockerRuntime {
 
     // Get exit code
     const inspection = await container.inspect();
-    const exitCode = inspection.State.ExitCode;
+    let exitCode = inspection.State.ExitCode ?? 1;
+
+    // Validate task outputs against configured output rules
+    if (filesystemMode !== 'none') {
+      const outputRules = config.outputs && config.outputs.length > 0 ? config.outputs : ['outputs/'];
+      const unauthorizedOutputs = await this.findUnauthorizedOutputs(outputsDir, outputRules);
+      if (unauthorizedOutputs.length > 0) {
+        exitCode = 1;
+        const message = [
+          'Output policy violation: task wrote files outside configured outputs.',
+          ...unauthorizedOutputs.map((outputFile) => `  - ${outputFile}`),
+        ].join('\n');
+        stderr = this.appendStderr(stderr, message);
+      }
+    }
 
     logger.debug('Container finished', {
       exitCode,
